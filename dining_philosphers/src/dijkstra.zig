@@ -4,8 +4,9 @@
 const std = @import("std");
 
 const PhilosopherState = enum { THINKING, HUNGRY, EATING };
+
+// Any number of philosophers should work so long as N is odd and >= 3.
 const NUM_PHILOSOPHERS = 5;
-var runLock = std.Thread.ResetEvent{};
 
 var printMutex = std.Thread.Mutex{};
 fn print(comptime fmt: []const u8, args: anytype) void {
@@ -49,13 +50,14 @@ const Philosopher = struct {
             self.state = PhilosopherState.EATING;
             self.semaphore.post();
         } else {
-            print("{d}: Forks not available! {d}={} {d}={}\n", .{self.i, self.left.i, self.left.state, self.right.i, self.right.state});
+            print("!!! Philosopher #{d}: Forks not available! left:({d})={} right:({d})={}\n",
+                .{self.i, self.left.i, self.left.state, self.right.i, self.right.state});
         }
     }
 
     fn think(self: *Philosopher) void {
         var duration = self.rand.intRangeAtMost(usize, 2, 5);
-        print("{d} thinks for {d} seconds...\n", .{self.i, duration});
+        print("... Philosopher #{d} thinks for {d} seconds...\n", .{self.i, duration});
 
         sleepSeconds(duration);
     }
@@ -64,7 +66,7 @@ const Philosopher = struct {
         self.mutex.lock();
 
         self.state = PhilosopherState.HUNGRY;
-        print("{d} is hungry...\n", .{self.i});
+        print("+++ Philosopher #{d} is hungry...\n", .{self.i});
 
         self.tryEating();
         self.mutex.unlock();
@@ -77,21 +79,21 @@ const Philosopher = struct {
         self.state = PhilosopherState.THINKING;
         self.left.tryEating();
         self.right.tryEating();
-        print("{d} released forks\n", .{self.i});
+        print("<<< Philosopher #{d} put down their forks\n", .{self.i});
         self.mutex.unlock();
     }
 
 
     fn eat(self: *Philosopher) void {
         var duration = self.rand.intRangeAtMost(usize, 2, 5);
-        print("*** {d} eats for {d} seconds...\n", .{self.i, duration});
+        print(">>> Philosopher #{d} eats for {d} seconds...\n", .{self.i, duration});
 
         sleepSeconds(duration);
     }
 
 };
 
-fn philosophize(philosopher: *Philosopher) void {
+fn philosophize(philosopher: *Philosopher, runLock: *std.Thread.ResetEvent) void {
     runLock.wait();
     while (!philosopher.done) {
         philosopher.think();
@@ -101,8 +103,8 @@ fn philosophize(philosopher: *Philosopher) void {
     }
 }
 
-fn spawnPhilosopher(philosopher: *Philosopher) std.Thread.SpawnError!std.Thread {
-    return std.Thread.spawn(std.Thread.SpawnConfig{}, philosophize, .{ philosopher }) catch @panic("Failed to spawn thread");
+fn spawnPhilosopher(philosopher: *Philosopher, runLock: *std.Thread.ResetEvent) !std.Thread {
+    return std.Thread.spawn(std.Thread.SpawnConfig{}, philosophize, .{ philosopher, runLock });
 }
 
 fn leftNeighbor(i: usize, n: usize) usize {
@@ -131,9 +133,10 @@ pub fn main() !void {
     }
 
 
+    var runLock = std.Thread.ResetEvent{};
     var threads: [philosophers.len]std.Thread = undefined;
     for (philosophers) |*p, i| {
-        threads[i] = spawnPhilosopher(p) catch |err| {
+        threads[i] = spawnPhilosopher(p, &runLock) catch |err| {
             print("Failed to spawn philosopher {d} - {}\n", .{i, err});
             return err;
         };
